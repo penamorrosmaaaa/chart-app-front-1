@@ -1,749 +1,1193 @@
-// src/components/General/General.js
-
-import React, { useState, useEffect, useMemo } from "react";
+// General.jsx
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
-  Box,
-  Text,
-  Flex,
-  Spinner,
-  Button,
-  Select,
-  Grid,
-  Popover,
-  PopoverTrigger,
-  PopoverContent,
-  PopoverArrow,
-  PopoverCloseButton,
-  PopoverHeader,
-  PopoverBody,
-  Input,
-  IconButton,
-  useToast,
+ Box,
+ Text,
+ Flex,
+ Spinner,
+ Button,
+ Select,
+ Grid,
+ useToast,
+ VStack,
+ HStack,
+ Checkbox,
+ CheckboxGroup,
+ IconButton,
+ Popover,
+ PopoverTrigger,
+ PopoverContent,
+ PopoverArrow,
+ PopoverCloseButton,
+ PopoverHeader,
+ PopoverBody,
+ Tooltip,
+ Modal,
+ ModalOverlay,
+ ModalContent,
+ ModalHeader,
+ ModalBody,
+ ModalCloseButton,
+ useDisclosure,
 } from "@chakra-ui/react";
 import Papa from "papaparse";
-import { FaCalendar, FaArrowLeft, FaArrowRight } from "react-icons/fa"; // Importing Calendar and Arrow Icons
+import { FaFilter, FaExpand } from "react-icons/fa"; // Importing FaFilter and FaExpand icons
 
-// Define the time periods
-const PERIODS = {
-  CURRENT_WEEK: "Current Week",
-  CURRENT_MONTH: "Current Month",
-  CURRENT_YEAR: "Current Year",
-  ALL_TIME: "All-Time",
+
+// Import Plotly component
+import Plot from "react-plotly.js";
+
+
+// Helper function to parse "YYYY-MM-DD" to Date object
+const parseDate = (dateStr) => {
+ const [year, month, day] = dateStr.split("-").map(Number);
+ return new Date(year, month - 1, day);
 };
 
-// Helper function to get the start of the week (Monday)
-const getStartOfWeek = (date) => {
-  const d = new Date(date);
-  const day = d.getDay(); // 0 (Sun) to 6 (Sat)
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1); // adjust when day is Sunday
-  return new Date(d.setDate(diff));
+
+// Helper function to get the Monday of the week for a given date
+const getWeekStartDate = (date) => {
+ const day = date.getDay(); // Sunday - Saturday : 0 - 6
+ const diff = day === 0 ? -6 : 1 - day; // Adjust when day is Sunday
+ const monday = new Date(date);
+ monday.setDate(date.getDate() + diff);
+ // Format as "YYYY-MM-DD" with leading zeros
+ const dd = String(monday.getDate()).padStart(2, "0");
+ const mm = String(monday.getMonth() + 1).padStart(2, "0");
+ const yyyy = monday.getFullYear();
+ return `${yyyy}-${mm}-${dd}`;
 };
 
-// Helper function to get the end of the week (Sunday)
-const getEndOfWeek = (date) => {
-  const d = new Date(date);
-  const day = d.getDay(); // 0 (Sun) to 6 (Sat)
-  const diff = day === 0 ? 0 : 7 - day;
-  return new Date(d.setDate(d.getDate() + diff));
+
+// Helper function to format numbers: display without decimals if integer, else with one decimal
+const formatNumber = (numStr) => {
+ const num = parseFloat(numStr);
+ if (isNaN(num)) return "N/A";
+ return Number.isInteger(num) ? num.toString() : num.toFixed(1);
 };
 
-// Helper function to parse dates as local dates
-const parseLocalDate = (dateStr) => {
-  const [year, month, day] = dateStr.split('-').map(Number);
-  return new Date(year, month - 1, day); // Months are 0-indexed
+
+// Define the groups and their member companies
+const GROUPS = {
+ AMP: [
+   "AZTECA UNO",
+   "AZTECA 7",
+   "DEPORTES",
+   "ADN40",
+   "NOTICIAS",
+   "AZTECA VERACRUZ",
+   "AZTECA QUINTANAROO",
+   "AZTECA BC",
+   "AZTECA SINALOA",
+   "AZTECA CJ",
+   "AZTECA AGUASCALIENTES",
+   "AZTECA QUERETARO",
+   "AZTECA CHIAPAS",
+   "AZTECA PUEBLA",
+   "AZTECA YUCATAN",
+   "AZTECA CHIHUAHUA",
+   "AZTECA MORELOS",
+   "AZTECA JALISCO",
+   "AZTECA GUERRERO",
+   "AZTECA BAJIO",
+ ],
 };
 
-// Utility function to calculate percentage change
-const calculatePercentageChange = (current, previous) => {
-  if (previous === 0 || previous === null) return "N/A";
-  const change = ((current - previous) / previous) * 100;
-  return change.toFixed(0); // No decimals
+
+// Extract group names and individual companies
+const GROUP_NAMES = Object.keys(GROUPS);
+const INDIVIDUAL_COMPANIES = GROUP_NAMES.reduce((acc, group) => acc.concat(GROUPS[group]), []);
+
+
+// Define the metrics to display (ensure unique names and updated order)
+const METRICS = [
+ "First Contentful Paint",
+ "Total Blocking Time",
+ "Speed Index Performance",
+ "Largest Contentful Paint",
+ "Cumulative Layout Shift",
+];
+
+
+// Define units for each metric
+const METRIC_UNITS = {
+ "First Contentful Paint": "s",
+ "Speed Index Performance": "s",
+ "Total Blocking Time": "ms",
+ "Largest Contentful Paint": "s",
+ "Cumulative Layout Shift": "", // No unit
 };
+
+
+// Thresholds for performance metrics
+const THRESHOLDS = {
+ "First Contentful Paint": {
+   good: 1.8,
+   needsImprovement: 3.0,
+ },
+ "Speed Index Performance": {
+   good: 3.4,
+   needsImprovement: 5.8,
+ },
+ "Largest Contentful Paint": {
+   good: 2.5,
+   needsImprovement: 4.0,
+ },
+ "Total Blocking Time": {
+   good: 200,
+   needsImprovement: 600,
+ },
+ "Cumulative Layout Shift": {
+   good: 0.1,
+   needsImprovement: 0.25,
+ },
+};
+
+
+// Ranges strings for tooltips
+const RANGES_STRINGS = {
+ "First Contentful Paint": "Good: 0–1.8 s, Needs Improvement: 1.8–3 s, Poor: Over 3 s",
+ "Speed Index Performance": "Good: 0–3.4 s, Needs Improvement: 3.4–5.8 s, Poor: Over 5.8 s",
+ "Largest Contentful Paint": "Good: 0–2.5 s, Needs Improvement: 2.5–4 s, Poor: Over 4 s",
+ "Total Blocking Time": "Good: 0–200 ms, Needs Improvement: 200–600 ms, Poor: Over 600 ms",
+ "Cumulative Layout Shift": "Good: 0–0.1, Needs Improvement: 0.1–0.25, Poor: Over 0.25",
+};
+
+
+// Mapping metrics to their corresponding keys in the data
+const METRIC_KEYS = {
+ "First Contentful Paint": "firstContentfulPaint",
+ "Speed Index Performance": "speedIndex",
+ "Total Blocking Time": "totalBlockingTime",
+ "Largest Contentful Paint": "largestContentfulPaint",
+ "Cumulative Layout Shift": "cumulativeLayoutShift",
+};
+
+
+// Helper function to calculate the slope of a linear regression
+const calculateSlope = (x, y) => {
+ const n = x.length;
+ if (n === 0) return 0;
+
+
+ const sum_x = x.reduce((a, b) => a + b, 0);
+ const sum_y = y.reduce((a, b) => a + b, 0);
+ const sum_xy = x.reduce((a, b, idx) => a + b * y[idx], 0);
+ const sum_xx = x.reduce((a, b) => a + b * b, 0);
+
+
+ const numerator = n * sum_xy - sum_x * sum_y;
+ const denominator = n * sum_xx - sum_x * sum_x;
+
+
+ if (denominator === 0) return 0;
+
+
+ return numerator / denominator;
+};
+
 
 const General = () => {
-  // State variables
-  const [totalData, setTotalData] = useState([]);
-  const [envivoData, setEnvivoData] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [comparisonMode, setComparisonMode] = useState("percentage"); // 'percentage' or 'raw'
-  const [selectedPeriod, setSelectedPeriod] = useState(PERIODS.CURRENT_MONTH); // **Default to Current Month**
-  const [averageData, setAverageData] = useState({
-    totalAvg: "N/A",
-    envivoAvg: "N/A",
-  });
-  
-  // **New State for Selected Date**
-  const [selectedDate, setSelectedDate] = useState(null); // Stores the user-selected date
+ // State variables
+ const [data, setData] = useState([]);
+ const [isLoading, setIsLoading] = useState(true);
+ const [error, setError] = useState(null);
 
-  const toast = useToast(); // For user feedback
 
-  // Fetch and parse CSV data
-  useEffect(() => {
-    const csvUrl =
-      "https://docs.google.com/spreadsheets/d/e/2PACX-1vTVHwv5X6-u3M7f8HJNih14hSnVpBlNKFUe_O76bTUJ2PaaOAfrqIrwjWsyc9DNFKxcYoEsWutl1_K6/pub?output=csv";
+ const [selectedCompany, setSelectedCompany] = useState("AMP"); // Preselect "AMP"
+ const [selectedCategories, setSelectedCategories] = useState(["nota", "video"]);
+ const [selectedWeek, setSelectedWeek] = useState("");
+ const [availableWeeks, setAvailableWeeks] = useState([]);
+ const [comparisonMode, setComparisonMode] = useState("Monthly"); // Preselect "Weekly"
 
-    Papa.parse(csvUrl, {
-      download: true,
-      header: true,
-      skipEmptyLines: true,
-      complete: (results) => {
-        try {
-          const parsedData = results.data;
 
-          // Debug: Log first few rows to verify data
-          console.log("Parsed CSV Data Sample:", parsedData.slice(0, 5));
+ const toast = useToast();
 
-          // Process total request counts per day
-          const totalRequestsMap = {};
-          const envivoRequestsMap = {};
 
-          parsedData.forEach((row, index) => {
-            const date = row["Date"]?.trim();
-            const object = row["Object"]?.trim();
-            const requestCountStr = row["Request Count"]?.trim();
-            const requestCount = parseInt(requestCountStr, 10);
+ // Modal state for expanded graph
+ const { isOpen, onOpen, onClose } = useDisclosure();
+ const [modalPlotData, setModalPlotData] = useState(null);
 
-            if (!date || isNaN(requestCount)) {
-              console.warn(`Skipping row ${index + 2} due to missing date or request count.`);
-              return;
-            }
 
-            // Aggregate total requests
-            if (!totalRequestsMap[date]) {
-              totalRequestsMap[date] = 0;
-            }
-            totalRequestsMap[date] += requestCount;
+ // Function to handle expand icon click
+ const handleExpand = (plotData, metric) => {
+   setModalPlotData({ ...plotData, metric });
+   onOpen();
+ };
 
-            // Aggregate envivo query requests
-            // Ensure exact match with leading slash
-            if (object.toLowerCase() === "/envivo/query") {
-              if (!envivoRequestsMap[date]) {
-                envivoRequestsMap[date] = 0;
-              }
-              envivoRequestsMap[date] += requestCount;
-            }
-          });
 
-          // Convert maps to sorted arrays
-          const sortedDates = Object.keys(totalRequestsMap).sort(
-            (a, b) => parseLocalDate(a) - parseLocalDate(b)
-          );
+ // Fetch and parse CSV data
+ useEffect(() => {
+   const csvUrl =
+     "https://docs.google.com/spreadsheets/d/e/2PACX-1vRR1e59vIg3x_lmclndf5s2jhBsh_EqpgSKN-s-qGwlchOpPhh5SD2vScPzQ8dd4jWxDREafnpF81GC/pub?output=csv";
 
-          const totalRequestsData = sortedDates.map((date) => ({
-            date,
-            totalRequests: totalRequestsMap[date],
-          }));
 
-          const envivoRequestsData = sortedDates.map((date) => ({
-            date,
-            envivoRequests: envivoRequestsMap[date] || 0,
-          }));
+   Papa.parse(csvUrl, {
+     download: true,
+     header: false, // Parse without headers
+     skipEmptyLines: true,
+     complete: (results) => {
+       try {
+         console.log("Raw Parsed CSV Data:", results.data); // Debugging
 
-          // Debug: Log aggregated data
-          console.log("Total Requests Data:", totalRequestsData);
-          console.log("Envivo Requests Data:", envivoRequestsData);
 
-          setTotalData(totalRequestsData);
-          setEnvivoData(envivoRequestsData);
-          setIsLoading(false);
-        } catch (err) {
-          console.error("Error processing CSV data:", err);
-          setError("Failed to process data.");
-          setIsLoading(false);
-        }
-      },
-      error: (err) => {
-        console.error("Error fetching CSV data:", err);
-        setError("Failed to fetch data.");
-        setIsLoading(false);
-      },
-    });
-  }, []);
+         const parsedData = results.data.map((row, index) => {
+           // Ensure the row has at least 8 columns
+           if (row.length < 8) {
+             throw new Error(`Row ${index + 1} has insufficient columns.`);
+           }
 
-  // **Helper Function to Filter Data Based on Selected Period or Selected Date**
-  const filterData = (period, date) => {
-    if (totalData.length === 0) return { filteredTotal: [], filteredEnvivo: [] };
 
-    if (date) {
-      // If a specific date is selected
-      const totalForDate = totalData.find((d) => d.date === date);
-      const envivoForDate = envivoData.find((d) => d.date === date);
-      return {
-        filteredTotal: totalForDate ? [totalForDate] : [],
-        filteredEnvivo: envivoForDate ? [envivoForDate] : [],
-      };
-    } else {
-      // Filter based on the selected period
-      const latestDateStr = totalData[totalData.length - 1].date;
-      const latestDate = parseLocalDate(latestDateStr);
+           const dateObj = parseDate(row[0].trim());
+           const weekStart = getWeekStartDate(dateObj);
 
-      console.log(`Selected Period: ${period}`);
-      console.log(`Latest Date: ${latestDate.toISOString().split('T')[0]}`);
 
-      let filteredTotal = [];
-      let filteredEnvivo = [];
+           return {
+             date: row[0].trim(), // Column A (YYYY-MM-DD)
+             company: row[1].trim().toUpperCase(), // Column B (converted to uppercase)
+             category: row[2].trim().toLowerCase(), // Column C
+             firstContentfulPaint: row[3].trim(), // Column D
+             totalBlockingTime: row[4].trim(), // Column E
+             speedIndex: row[5].trim(), // Column F
+             largestContentfulPaint: row[6].trim(), // Column G
+             cumulativeLayoutShift: row[7].trim(), // Column H
+             week: weekStart, // Added week information
+           };
+         });
 
-      switch (period) {
-        case PERIODS.CURRENT_WEEK:
-          const startOfWeek = getStartOfWeek(latestDate);
-          const endOfWeek = getEndOfWeek(latestDate);
-          console.log(`Start of Week (Monday): ${startOfWeek.toISOString().split('T')[0]}`);
-          console.log(`End of Week (Sunday): ${endOfWeek.toISOString().split('T')[0]}`);
-          filteredTotal = totalData.filter((d) => {
-            const current = parseLocalDate(d.date);
-            return current >= startOfWeek && current <= endOfWeek;
-          });
-          filteredEnvivo = envivoData.filter((d) => {
-            const current = parseLocalDate(d.date);
-            return current >= startOfWeek && current <= endOfWeek;
-          });
-          break;
 
-        case PERIODS.CURRENT_MONTH:
-          const currentMonth = latestDate.getMonth(); // 0-11
-          const currentYear = latestDate.getFullYear();
-          filteredTotal = totalData.filter(
-            (d) =>
-              parseLocalDate(d.date).getMonth() === currentMonth &&
-              parseLocalDate(d.date).getFullYear() === currentYear
-          );
-          filteredEnvivo = envivoData.filter(
-            (d) =>
-              parseLocalDate(d.date).getMonth() === currentMonth &&
-              parseLocalDate(d.date).getFullYear() === currentYear
-          );
-          break;
+         // Extract unique weeks and sort them
+         const weeks = Array.from(new Set(parsedData.map((d) => d.week)));
+         weeks.sort((a, b) => {
+           const dateA = parseDate(a);
+           const dateB = parseDate(b);
+           return dateA - dateB;
+         });
 
-        case PERIODS.CURRENT_YEAR:
-          const year = latestDate.getFullYear();
-          filteredTotal = totalData.filter(
-            (d) => parseLocalDate(d.date).getFullYear() === year
-          );
-          filteredEnvivo = envivoData.filter(
-            (d) => parseLocalDate(d.date).getFullYear() === year
-          );
-          break;
 
-        case PERIODS.ALL_TIME:
-        default:
-          filteredTotal = [...totalData];
-          filteredEnvivo = [...envivoData];
-          break;
-      }
+         console.log("Available Weeks:", weeks); // Debugging
+         console.log("Parsed Data:", parsedData); // Debugging
 
-      console.log(`Filtered Total Data Count: ${filteredTotal.length}`);
-      console.log(`Filtered Envivo Data Count: ${filteredEnvivo.length}`);
 
-      return { filteredTotal, filteredEnvivo };
-    }
-  };
+         setAvailableWeeks(weeks);
+         setData(parsedData);
 
-  // Calculate averages based on selected period or selected date
-  useEffect(() => {
-    const { filteredTotal, filteredEnvivo } = filterData(selectedPeriod, selectedDate);
 
-    if (filteredTotal.length === 0) {
-      setAverageData({
-        totalAvg: "N/A",
-        envivoAvg: "N/A",
-      });
-      return;
-    }
+         // Preselect the most recent week
+         if (weeks.length > 0) {
+           setSelectedWeek(weeks[weeks.length - 1]);
+         }
 
-    const totalSum = filteredTotal.reduce((sum, d) => sum + d.totalRequests, 0);
-    const envivoSum = filteredEnvivo.reduce((sum, d) => sum + d.envivoRequests, 0);
 
-    const totalAvg = (totalSum / filteredTotal.length).toLocaleString(undefined, {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    }); // No decimals
-    const envivoAvg = (envivoSum / filteredEnvivo.length).toLocaleString(undefined, {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    }); // No decimals
+         setIsLoading(false);
+       } catch (err) {
+         console.error("Error processing CSV data:", err);
+         setError(`Failed to process data: ${err.message}`);
+         setIsLoading(false);
+       }
+     },
+     error: (err) => {
+       console.error("Error fetching CSV data:", err);
+       setError(`Failed to fetch data: ${err.message}`);
+       setIsLoading(false);
+     },
+   });
+ }, []);
 
-    setAverageData({
-      totalAvg,
-      envivoAvg,
-    });
-  }, [selectedPeriod, selectedDate, totalData, envivoData]);
 
-  // **Function to Find Data from 7 Days Ago**
-  const findDataSevenDaysAgo = (date, dataSet) => {
-    const current = new Date(date);
-    current.setDate(current.getDate() - 7);
-    const formattedDate = current.toISOString().split("T")[0];
-    const previousData = dataSet.find((d) => d.date === formattedDate);
-    return previousData ? previousData : null;
-  };
+ // Generate company options including groups and individual companies
+ const companyOptions = useMemo(() => {
+   const options = [];
 
-  // Calculate changes for Total Requests
-  const currentTotalRequest = useMemo(() => {
-    if (selectedDate) {
-      const data = totalData.find((d) => d.date === selectedDate);
-      return data ? data.totalRequests : null; // Corrected: 'data' instead of 'd'
-    }
-    if (totalData.length === 0) return null;
-    return totalData[totalData.length - 1].totalRequests;
-  }, [totalData, selectedDate]);
 
-  const previousTotalRequest = useMemo(() => {
-    if (currentTotalRequest === null) return null;
-    const currentDate = selectedDate || totalData[totalData.length - 1].date;
-    const previousData = findDataSevenDaysAgo(currentDate, totalData);
-    return previousData ? previousData.totalRequests : null;
-  }, [totalData, currentTotalRequest, selectedDate]);
+   // Add group options
+   GROUP_NAMES.forEach((group) => {
+     options.push(
+       <option key={group} value={group}>
+         {group}
+       </option>
+     );
+   });
 
-  const totalRequestChange = useMemo(() => {
-    if (previousTotalRequest === null || currentTotalRequest === null) return "N/A";
-    const change = currentTotalRequest - previousTotalRequest;
-    return change.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 }); // No decimals
-  }, [currentTotalRequest, previousTotalRequest]);
 
-  const totalPercentageChange = useMemo(() => {
-    if (previousTotalRequest === null || currentTotalRequest === null) return "N/A";
-    return calculatePercentageChange(currentTotalRequest, previousTotalRequest);
-  }, [currentTotalRequest, previousTotalRequest]);
+   // Add individual company options
+   INDIVIDUAL_COMPANIES.forEach((company) => {
+     options.push(
+       <option key={company} value={company}>
+         {company}
+       </option>
+     );
+   });
 
-  // Calculate changes for Envivo Query
-  const currentEnvivoRequest = useMemo(() => {
-    if (selectedDate) {
-      const data = envivoData.find((d) => d.date === selectedDate);
-      return data ? data.envivoRequests : null;
-    }
-    if (envivoData.length === 0) return null;
-    return envivoData[envivoData.length - 1].envivoRequests;
-  }, [envivoData, selectedDate]);
 
-  const previousEnvivoRequest = useMemo(() => {
-    if (currentEnvivoRequest === null) return null;
-    const currentDate = selectedDate || envivoData[envivoData.length - 1].date;
-    const previousData = findDataSevenDaysAgo(currentDate, envivoData);
-    return previousData ? previousData.envivoRequests : null;
-  }, [envivoData, currentEnvivoRequest, selectedDate]);
+   return options;
+ }, []);
 
-  const envivoRequestChange = useMemo(() => {
-    if (previousEnvivoRequest === null || currentEnvivoRequest === null) return "N/A";
-    const change = currentEnvivoRequest - previousEnvivoRequest;
-    return change.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 }); // No decimals
-  }, [currentEnvivoRequest, previousEnvivoRequest]);
 
-  const envivoPercentageChange = useMemo(() => {
-    if (previousEnvivoRequest === null || currentEnvivoRequest === null) return "N/A";
-    return calculatePercentageChange(currentEnvivoRequest, previousEnvivoRequest);
-  }, [currentEnvivoRequest, previousEnvivoRequest]);
+ // Function to get the comparison date based on the selected date and comparison mode
+ const getComparisonPeriod = useCallback((currentDateStr, mode) => {
+   const currentDate = parseDate(currentDateStr);
+   let comparisonDate;
 
-  // Toggle comparison mode
-  const toggleComparisonMode = () => {
-    setComparisonMode((prev) => (prev === "percentage" ? "raw" : "percentage"));
-  };
 
-  // **Compute the Latest or Selected Date Label**
-  const latestDateLabel = useMemo(() => {
-    if (selectedDate) {
-      const selected = parseLocalDate(selectedDate);
-      const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
-      return `Viewing data for ${selected.toLocaleDateString(undefined, options)}`;
-    }
+   switch (mode) {
+     case "Weekly":
+       comparisonDate = new Date(currentDate);
+       comparisonDate.setDate(currentDate.getDate() - 7);
+       break;
+     case "Monthly":
+       comparisonDate = new Date(currentDate);
+       comparisonDate.setMonth(currentDate.getMonth() - 1);
+       break;
+     case "Yearly":
+       comparisonDate = new Date(currentDate);
+       comparisonDate.setFullYear(currentDate.getFullYear() - 1);
+       break;
+     default:
+       return null;
+   }
 
-    if (totalData.length === 0) return "No data available";
-    const latestDateStr = totalData[totalData.length - 1].date;
-    const latestDate = parseLocalDate(latestDateStr);
-    const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
-    return `Viewing data for ${latestDate.toLocaleDateString(undefined, options)}`;
-  }, [selectedDate, totalData]);
 
-  // **Handle Date Selection**
-  const handleDateChange = (e) => {
-    const date = e.target.value;
-    if (date) {
-      setSelectedDate(date);
-      toast({
-        title: "Date Selected",
-        description: `Viewing data for ${date}`,
-        status: "success",
-        duration: 3000,
-        isClosable: true,
-      });
-    }
-  };
+   return comparisonDate;
+ }, []);
 
-  // **Function to Reset Selected Date**
-  const resetSelectedDate = () => {
-    setSelectedDate(null);
-    toast({
-      title: "Date Reset",
-      description: "Viewing data based on selected period.",
-      status: "info",
-      duration: 3000,
-      isClosable: true,
-    });
-  };
 
-  // **Helper Function for Color Coding**
-  const comparisonColor = (change) => {
-    if (change === "N/A") return "gray.400";
-    return change >= 0 ? "green.400" : "red.400";
-  };
+ // Get the comparison date based on the selected week and comparison mode
+ const comparisonDate = useMemo(() => {
+   if (comparisonMode === "Weekly" || comparisonMode === "Monthly" || comparisonMode === "Yearly") {
+     if (selectedWeek === "") return null;
+     return getComparisonPeriod(selectedWeek, comparisonMode);
+   }
+   return null;
+ }, [selectedWeek, comparisonMode, getComparisonPeriod]);
 
-  // **Handle Arrow Navigation**
-  const navigateDate = (direction) => {
-    if (!totalData.length) return;
 
-    // Determine the current date
-    const currentDate = selectedDate || totalData[totalData.length - 1].date;
-    const currentIndex = totalData.findIndex((d) => d.date === currentDate);
+ // Memoized function to get filtered data
+ const getFilteredData = useCallback(
+   (dataSet, dateFilter) => {
+     return dataSet.filter((row) => {
+       // Company filtering
+       let companyMatch = false;
+       if (selectedCompany === "") {
+         companyMatch = true; // No company selected
+       } else if (GROUP_NAMES.includes(selectedCompany)) {
+         // Group selected
+         const groupCompanies = GROUPS[selectedCompany].map((c) => c.toUpperCase());
+         companyMatch = groupCompanies.includes(row.company);
+       } else {
+         // Individual company selected
+         companyMatch = row.company === selectedCompany.toUpperCase();
+       }
 
-    if (direction === "left" && currentIndex > 0) {
-      const newDate = totalData[currentIndex - 1].date;
-      setSelectedDate(newDate);
-      toast({
-        title: "Date Changed",
-        description: `Viewing data for ${newDate}`,
-        status: "success",
-        duration: 3000,
-        isClosable: true,
-      });
-    } else if (direction === "right" && currentIndex < totalData.length - 1) {
-      const newDate = totalData[currentIndex + 1].date;
-      setSelectedDate(newDate);
-      toast({
-        title: "Date Changed",
-        description: `Viewing data for ${newDate}`,
-        status: "success",
-        duration: 3000,
-        isClosable: true,
-      });
-    }
-  };
 
-  return (
-    <>
-      {isLoading ? (
-        <Flex justifyContent="center" alignItems="center" height="50vh">
-          <Spinner size="xl" color="teal.500" />
-          <Text ml={4} fontSize="xl">
-            Loading data...
-          </Text>
-        </Flex>
-      ) : error ? (
-        <Text color="red.500" fontSize="xl">
-          {error}
-        </Text>
-      ) : (
-        <Flex
-          direction="column"
-          gap={10}
-          width="100%"
-          maxW="1200px"
-          align="center"
-          bg="transparent"  // Explicitly set the background to transparent
-          mx="auto" // Center this Flex container
-        >
-          {/* **Header with Latest Date Label and Navigation Icons** */}
-          <Flex
-            width="100%"
-            maxW="800px"
-            justifyContent="space-between"
-            alignItems="center"
-          >
-            <Flex alignItems="center" gap={2}>
-              {/* Left Arrow Icon */}
-              <IconButton
-                aria-label="Previous Day"
-                icon={<FaArrowLeft />}
-                colorScheme="whiteAlpha"
-                variant="ghost"
-                color="white"
-                onClick={() => navigateDate("left")}
-                isDisabled={
-                  selectedDate
-                    ? totalData.findIndex((d) => d.date === selectedDate) === 0
-                    : totalData.length === 0
-                }
-                size="sm"
-                _hover={{ background: "transparent" }} // No hover background
-              />
+       // Category filtering
+       const categoryMatch =
+         selectedCategories.length === 0 || selectedCategories.includes(row.category);
 
-              {/* Date Label */}
-              <Text
-                fontSize="lg"          // Uniform font size
-                fontWeight="bold"      // Bold font
-                color="white"          // White color
-              >
-                {latestDateLabel}
-              </Text>
 
-              {/* Right Arrow Icon */}
-              <IconButton
-                aria-label="Next Day"
-                icon={<FaArrowRight />}
-                colorScheme="whiteAlpha"
-                variant="ghost"
-                color="white"
-                onClick={() => navigateDate("right")}
-                isDisabled={
-                  selectedDate
-                    ? selectedDate === totalData[totalData.length - 1].date
-                    : totalData.length === 0
-                }
-                size="sm"
-                _hover={{ background: "transparent" }} // No hover background
-              />
-            </Flex>
+       // Time filtering
+       let timeMatch = true;
+       if (dateFilter) {
+         const rowDate = parseDate(row.date);
+         const filterDate = parseDate(dateFilter);
 
-            {/* **Date Selection Button with Calendar Icon** */}
-            <Popover placement="bottom-end">
-              <PopoverTrigger>
-                <IconButton
-                  aria-label="Select Date"
-                  icon={<FaCalendar />}
-                  colorScheme="whiteAlpha"
-                  variant="ghost" // Transparent background
-                  _hover={{ background: "transparent" }} // No hover background
-                  color="white"
-                  size="sm"
-                />
-              </PopoverTrigger>
-              <PopoverContent
-                bg="white"
-                border="1px solid #ccc"
-                boxShadow="md"
-                borderRadius="md"
-              >
-                <PopoverArrow />
-                <PopoverCloseButton />
-                <PopoverHeader>Select a Date</PopoverHeader>
-                <PopoverBody>
-                  <Input
-                    type="date"
-                    onChange={handleDateChange}
-                    max={totalData.length > 0 ? totalData[totalData.length - 1].date : undefined}
-                    min={totalData.length > 0 ? totalData[0].date : undefined}
-                    value={selectedDate || ""}
-                    bg="transparent" // Transparent background
-                    borderColor="gray.300" // Light border color
-                    _hover={{ borderColor: "gray.400" }} // Slight border color on hover
-                    _focus={{ borderColor: "teal.500", boxShadow: "none" }} // Focus styles
-                    color="black" // Set font color to black for visibility
-                  />
-                  {selectedDate && (
-                    <Button
-                      mt={4}
-                      colorScheme="red"
-                      size="sm"
-                      onClick={resetSelectedDate}
-                      width="100%"
-                      variant="outline"
-                      _hover={{ background: "transparent" }} // No hover background
-                    >
-                      Clear Selection
-                    </Button>
-                  )}
-                </PopoverBody>
-              </PopoverContent>
-            </Popover>
-          </Flex>
 
-          {/* Main Data Display: Daily Counts */}
-          <Flex
-            direction={{ base: "column", md: "row" }}
-            gap={10}
-            width="100%"
-            maxW="800px"
-            justifyContent="center"
-          >
-            {/* Daily Request Count Box */}
-            <Box
-              bg="linear-gradient(90deg, #000000, #7800ff)" // Linear gradient background
-              borderRadius="20px" // Rounded corners
-              border="5px solid rgba(255, 255, 255, 0.8)" // White border with transparency
-              boxShadow="0px 0px 15px rgba(200, 200, 200, 0.5)" // Shiny glow effect
-              p={6}
-              flex="1"
-            >
-              <Flex justifyContent="space-between" alignItems="center" mb={4}>
-                <Text
-                  fontSize="lg"          // Uniform font size
-                  fontWeight="bold"      // Bold font
-                  color="white"          // White color
-                >
-                  Daily Request Count
-                </Text>
-                <Button onClick={toggleComparisonMode} colorScheme="teal" size="sm">
-                  Show {comparisonMode === "percentage" ? "Raw" : "Percentage"}
-                </Button>
-              </Flex>
-              <Flex direction="column" alignItems="center">
-                <Text fontSize="4xl" fontWeight="bold">
-                  {selectedDate
-                    ? (totalData.find((d) => d.date === selectedDate)?.totalRequests || "N/A").toLocaleString()
-                    : (currentTotalRequest !== null ? currentTotalRequest.toLocaleString() : "N/A")}
-                </Text>
-                <Flex alignItems="center" mt={2}>
-                  {comparisonMode === "percentage" ? (
-                    <>
-                      <Text
-                        fontSize="lg"
-                        color={comparisonColor(totalPercentageChange)}
-                        mr={2}
-                      >
-                        {totalPercentageChange === "N/A" ? "N/A" : `${totalPercentageChange}%`}
-                      </Text>
-                      <Text fontSize="md">compared to last week</Text>
-                    </>
-                  ) : (
-                    <>
-                      <Text
-                        fontSize="lg"
-                        color={comparisonColor(totalRequestChange)}
-                        mr={2}
-                      >
-                        {totalRequestChange === "N/A"
-                          ? "N/A"
-                          : `${totalRequestChange >= 0 ? "+" : ""}${totalRequestChange}`}
-                      </Text>
-                      <Text fontSize="md">compared to last week</Text>
-                    </>
-                  )}
-                </Flex>
-              </Flex>
-            </Box>
+         if (comparisonMode === "Weekly") {
+           // Filter by week
+           timeMatch = row.week === dateFilter;
+         } else if (comparisonMode === "Monthly") {
+           // Filter by month
+           timeMatch =
+             rowDate.getFullYear() === filterDate.getFullYear() &&
+             rowDate.getMonth() === filterDate.getMonth();
+         } else if (comparisonMode === "Yearly") {
+           // Filter by year
+           timeMatch = rowDate.getFullYear() === filterDate.getFullYear();
+         } else {
+           // Default to no time filter
+           timeMatch = true;
+         }
+       }
 
-            {/* Daily Envivo Query Count Box */}
-            <Box
-              bg="linear-gradient(90deg, #000000, #7800ff)" // Linear gradient background
-              borderRadius="20px" // Rounded corners
-              border="5px solid rgba(255, 255, 255, 0.8)" // White border with transparency
-              boxShadow="0px 0px 15px rgba(200, 200, 200, 0.5)" // Shiny glow effect
-              p={6}
-              flex="1"
-            >
-              <Flex justifyContent="space-between" alignItems="center" mb={4}>
-                <Text
-                  fontSize="lg"          // Uniform font size
-                  fontWeight="bold"      // Bold font
-                  color="white"          // White color
-                >
-                  Daily Envivo Query Count
-                </Text>
-                <Button onClick={toggleComparisonMode} colorScheme="teal" size="sm">
-                  Show {comparisonMode === "percentage" ? "Raw" : "Percentage"}
-                </Button>
-              </Flex>
-              <Flex direction="column" alignItems="center">
-                <Text fontSize="4xl" fontWeight="bold">
-                  {selectedDate
-                    ? (envivoData.find((d) => d.date === selectedDate)?.envivoRequests || "N/A").toLocaleString()
-                    : (currentEnvivoRequest !== null
-                      ? currentEnvivoRequest.toLocaleString()
-                      : "N/A")}
-                </Text>
-                <Flex alignItems="center" mt={2}>
-                  {comparisonMode === "percentage" ? (
-                    <>
-                      <Text
-                        fontSize="lg"
-                        color={comparisonColor(envivoPercentageChange)}
-                        mr={2}
-                      >
-                        {envivoPercentageChange === "N/A" ? "N/A" : `${envivoPercentageChange}%`}
-                      </Text>
-                      <Text fontSize="md">compared to last week</Text>
-                    </>
-                  ) : (
-                    <>
-                      <Text
-                        fontSize="lg"
-                        color={comparisonColor(envivoRequestChange)}
-                        mr={2}
-                      >
-                        {envivoRequestChange === "N/A"
-                          ? "N/A"
-                          : `${envivoRequestChange >= 0 ? "+" : ""}${envivoRequestChange}`}
-                      </Text>
-                      <Text fontSize="md">compared to last week</Text>
-                    </>
-                  )}
-                </Flex>
-              </Flex>
-            </Box>
-          </Flex>
 
-          {/* Averages Display */}
-          <Box
-            bg="linear-gradient(90deg, #000000, #7800ff)" // Linear gradient background
-            borderRadius="20px" // Rounded corners
-            border="5px solid rgba(255, 255, 255, 0.8)" // White border with transparency
-            boxShadow="0px 0px 15px rgba(200, 200, 200, 0.5)" // Shiny glow effect
-            p={6}
-            width="100%"
-            maxW="800px"
-            mb={10} // Added margin-bottom for additional padding after this section
-          >
-            <Flex justifyContent="space-between" alignItems="center" mb={4}>
-              <Text
-                fontSize="lg"          // Uniform font size
-                fontWeight="bold"      // Bold font
-                color="white"          // White color
-              >
-                Averages for {selectedPeriod}
-              </Text>
-              {/* Select Time Period Dropdown */}
-              <Select
-                value={selectedPeriod}
-                onChange={(e) => {
-                  setSelectedPeriod(e.target.value);
-                  setSelectedDate(null); // Reset selected date when period changes
-                }}
-                placeholder="Select"
-                size="sm" // Smaller size
-                width="150px" // Fixed small width
-                aria-label="Select Time Period" // Accessibility
-              >
-                {Object.values(PERIODS).map((period) => (
-                  <option key={period} value={period}>
-                    {period}
-                  </option>
-                ))}
-              </Select>
-            </Flex>
-            <Grid templateColumns="repeat(2, 1fr)" gap={6}>
-              <Box textAlign="center">
-                <Text
-                  fontSize="md"          // Uniform font size
-                  fontWeight="bold"      // Bold font
-                  color="white"          // White color
-                >
-                  Request Count
-                </Text>
-                <Text fontSize="2xl">
-                  {averageData.totalAvg !== "N/A"
-                    ? averageData.totalAvg.toLocaleString()
-                    : "N/A"}
-                </Text>
-              </Box>
-              <Box textAlign="center">
-                <Text
-                  fontSize="md"          // Uniform font size
-                  fontWeight="bold"      // Bold font
-                  color="white"          // White color
-                >
-                  Envivo Query Count
-                </Text>
-                <Text fontSize="2xl">
-                  {averageData.envivoAvg !== "N/A"
-                    ? averageData.envivoAvg.toLocaleString()
-                    : "N/A"}
-                </Text>
-              </Box>
-            </Grid>
-          </Box>
-        </Flex>
-      )}
-    </>
-  );
+       return companyMatch && categoryMatch && timeMatch;
+     });
+   },
+   [selectedCompany, selectedCategories, comparisonMode]
+ );
+
+
+ // Memoize the filtered data
+ const filteredDataMemo = useMemo(() => {
+   return getFilteredData(data, selectedWeek);
+ }, [getFilteredData, data, selectedWeek]);
+
+
+ // Filtered data for comparison
+ const comparisonData = useMemo(() => {
+   if (!comparisonDate) return [];
+
+
+   let comparisonDateStr = "";
+   if (comparisonMode === "Weekly") {
+     comparisonDateStr = getWeekStartDate(comparisonDate);
+   } else if (comparisonMode === "Monthly" || comparisonMode === "Yearly") {
+     const yyyy = comparisonDate.getFullYear();
+     const mm = String(comparisonDate.getMonth() + 1).padStart(2, "0");
+     const dd = String(comparisonDate.getDate()).padStart(2, "0");
+     comparisonDateStr = `${yyyy}-${mm}-${dd}`;
+   }
+
+
+   return getFilteredData(data, comparisonDateStr);
+ }, [getFilteredData, data, comparisonDate, comparisonMode]);
+
+
+ // Calculate averages for current data
+ const averages = useMemo(() => {
+   if (filteredDataMemo.length === 0) return {};
+
+
+   const metricSums = {};
+   METRICS.forEach((metric) => {
+     metricSums[metric] = 0;
+   });
+
+
+   filteredDataMemo.forEach((row) => {
+     METRICS.forEach((metric) => {
+       const key = METRIC_KEYS[metric];
+       const value = parseFloat(row[key]);
+       if (!isNaN(value)) {
+         metricSums[metric] += value;
+       }
+     });
+   });
+
+
+   const metricAverages = {};
+   METRICS.forEach((metric) => {
+     metricAverages[metric] = (metricSums[metric] / filteredDataMemo.length).toFixed(2);
+   });
+
+
+   console.log("Current Averages:", metricAverages); // Debugging
+   return metricAverages;
+ }, [filteredDataMemo]);
+
+
+ // Calculate averages for comparison data
+ const comparisonAverages = useMemo(() => {
+   if (comparisonData.length === 0) return {};
+
+
+   const metricSums = {};
+   METRICS.forEach((metric) => {
+     metricSums[metric] = 0;
+   });
+
+
+   comparisonData.forEach((row) => {
+     METRICS.forEach((metric) => {
+       const key = METRIC_KEYS[metric];
+       const value = parseFloat(row[key]);
+       if (!isNaN(value)) {
+         metricSums[metric] += value;
+       }
+     });
+   });
+
+
+   const metricAverages = {};
+   METRICS.forEach((metric) => {
+     metricAverages[metric] = (metricSums[metric] / comparisonData.length).toFixed(2);
+   });
+
+
+   console.log("Comparison Averages:", metricAverages); // Debugging
+   return metricAverages;
+ }, [comparisonData]);
+
+
+ // Calculate percentage differences
+ const percentageDifferences = useMemo(() => {
+   if (!comparisonDate) return {};
+
+
+   const differences = {};
+
+
+   METRICS.forEach((metric) => {
+     const current = parseFloat(averages[metric]);
+     const comparison = parseFloat(comparisonAverages[metric]);
+
+
+     if (isNaN(current) || isNaN(comparison) || comparison === 0) {
+       differences[metric] = "N/A";
+     } else {
+       // Calculate percentage difference and round to whole number
+       const diff = ((current - comparison) / comparison) * 100;
+       differences[metric] = Math.round(diff);
+     }
+   });
+
+
+   console.log("Percentage Differences:", differences); // Debugging
+   return differences;
+ }, [averages, comparisonAverages, comparisonDate]);
+
+
+ // Determine color based on percentage difference
+ const getDifferenceColor = (metric) => {
+   const diff = parseFloat(percentageDifferences[metric]);
+   if (isNaN(diff)) return "gray.300"; // N/A
+
+
+   // For metrics where lower is better
+   if (diff < 0) {
+     // Improvement
+     return "green.400";
+   } else if (diff > 0) {
+     // Deterioration
+     return "red.400";
+   } else {
+     return "gray.300"; // No change
+   }
+ };
+
+
+ // Function to get performance color based on thresholds
+ const getPerformanceColor = (metric, value) => {
+   if (!THRESHOLDS[metric] || isNaN(value)) {
+     return "gray.300"; // default color
+   }
+
+
+   const thresholds = THRESHOLDS[metric];
+
+
+   if (value <= thresholds.good) {
+     return "green.400";
+   } else if (value <= thresholds.needsImprovement) {
+     return "orange.400";
+   } else {
+     return "red.400";
+   }
+ };
+
+
+ // Handle company selection
+ const handleCompanyChange = (e) => {
+   setSelectedCompany(e.target.value);
+   // Removed setSelectedWeek to persist week selection
+ };
+
+
+ // Handle category selection
+ const handleCategoryChange = (values) => {
+   setSelectedCategories(values);
+   // Removed setSelectedWeek to persist week selection
+ };
+
+
+ // Handle week selection
+ const handleWeekChange = (e) => {
+   setSelectedWeek(e.target.value);
+   toast({
+     title: "Week Selected",
+     description: `Viewing data for the week starting on ${e.target.value}`,
+     status: "success",
+     duration: 3000,
+     isClosable: true,
+   });
+ };
+
+
+ // Reset week selection
+ const resetWeekSelection = () => {
+   setSelectedWeek("");
+   toast({
+     title: "Week Reset",
+     description: "Viewing data without week filter.",
+     status: "info",
+     duration: 3000,
+     isClosable: true,
+   });
+ };
+
+
+ // Handle comparison mode selection
+ const handleComparisonModeChange = (mode) => {
+   setComparisonMode(mode);
+   toast({
+     title: `${mode} Comparison`,
+     description: `Comparing to ${
+       mode === "Weekly" ? "Last Week" : mode === "Monthly" ? "Last Month" : "Last Year"
+     }.`,
+     status: "info",
+     duration: 3000,
+     isClosable: true,
+   });
+ };
+
+
+ // **Prepare data for Plotly graphs based on filtered data**
+ const plotlyData = useMemo(() => {
+   // Sort data by date
+   const sortedData = [...filteredDataMemo].sort((a, b) => parseDate(a.date) - parseDate(b.date));
+
+
+   // Check if multiple categories are selected
+   const shouldAggregate = selectedCategories.length > 1;
+
+
+   if (shouldAggregate || GROUP_NAMES.includes(selectedCompany)) {
+     // Group data by date and compute average per metric
+     const dataByDate = {};
+
+
+     sortedData.forEach((row) => {
+       if (!dataByDate[row.date]) {
+         dataByDate[row.date] = { count: 0 };
+         METRICS.forEach((metric) => {
+           dataByDate[row.date][metric] = 0;
+         });
+       }
+       dataByDate[row.date].count += 1;
+       METRICS.forEach((metric) => {
+         const key = METRIC_KEYS[metric];
+         const value = parseFloat(row[key]);
+         if (!isNaN(value)) {
+           dataByDate[row.date][metric] += value;
+         }
+       });
+     });
+
+
+     // Compute averages
+     const averagedData = Object.keys(dataByDate)
+       .map((date) => {
+         const obj = { date };
+         METRICS.forEach((metric) => {
+           obj[metric] = (dataByDate[date][metric] / dataByDate[date].count).toFixed(2) || 0;
+         });
+         return obj;
+       })
+       .sort((a, b) => parseDate(a.date) - parseDate(b.date));
+
+
+     // Prepare plotly data
+     return averagedData.map((row) => {
+       const obj = { date: row.date };
+       METRICS.forEach((metric) => {
+         obj[metric] = parseFloat(row[metric]) || 0;
+       });
+       return obj;
+     });
+   } else {
+     // Individual company or single category selected, use existing data
+     return sortedData.map((row) => {
+       const obj = { date: row.date };
+       METRICS.forEach((metric) => {
+         const key = METRIC_KEYS[metric];
+         obj[metric] = parseFloat(row[key]) || 0;
+       });
+       return obj;
+     });
+   }
+ }, [filteredDataMemo, selectedCategories, selectedCompany]);
+
+
+ // **Determine the full date range for the filtered data**
+ const dateRange = useMemo(() => {
+   if (plotlyData.length === 0) return { min: null, max: null };
+   const dates = plotlyData.map((d) => parseDate(d.date));
+   const minDate = new Date(Math.min(...dates));
+   const maxDate = new Date(Math.max(...dates));
+   return { min: minDate, max: maxDate };
+ }, [plotlyData]);
+
+
+ // **Calculate trendline and determine color for each metric**
+ const trendData = useMemo(() => {
+   const trends = {};
+
+
+   METRICS.forEach((metric) => {
+     const plotDataPoints = plotlyData.map((d) => parseDate(d.date).getTime());
+     const plotMetricValues = plotlyData.map((d) => d[metric]);
+
+
+     const slope = calculateSlope(plotDataPoints, plotMetricValues);
+     trends[metric] = slope;
+   });
+
+
+   return trends;
+ }, [plotlyData]);
+
+
+ return (
+   <>
+     {isLoading ? (
+       <Flex justifyContent="center" alignItems="center" height="50vh">
+         <Spinner size="xl" color="teal.500" />
+         <Text ml={4} fontSize="xl">
+           Loading data...
+         </Text>
+       </Flex>
+     ) : error ? (
+       <Text color="red.500" fontSize="xl" textAlign="center">
+         {error}
+       </Text>
+     ) : (
+       <Flex
+         direction="column"
+         gap={4} // Reduced gap to minimize empty space
+         width="100%"
+         maxW="1200px"
+         align="center"
+         bg="linear-gradient(90deg, #000000, #7800ff)" // Consistent background
+         p={4} // Reduced padding to minimize empty space
+         borderRadius="15px"
+         border="2.5px solid"
+         borderColor="gray.300" // Same border as panels
+         mx="auto"
+       >
+         {/* Header Section */}
+         <Flex
+           width="100%"
+           justifyContent="space-between"
+           alignItems="center"
+           flexWrap="wrap"
+           gap={2} // Reduced gap
+           bg="transparent" // Removed background
+         >
+           {/* Company Selector and Filter Icon */}
+           <Flex alignItems="center" gap={2}>
+             <Text color="white" fontSize="md" fontWeight="semibold">
+               Company:
+             </Text>
+             <Select
+               value={selectedCompany}
+               onChange={handleCompanyChange}
+               placeholder="Select Company"
+               width="200px" // Reduced width if necessary
+               bg="transparent" // Changed from "white" to "transparent"
+               color="white" // Changed text color to white for readability
+               borderRadius="md"
+               size="sm" // Smaller size to reduce padding
+               border="1px solid rgba(255, 255, 255, 0.6)" // Added semi-transparent white border
+               _placeholder={{ color: "gray.300" }} // Placeholder color
+               _focus={{ borderColor: "teal.300", boxShadow: "none" }} // Focus state
+               _hover={{ borderColor: "teal.200" }} // Hover state
+             >
+               {companyOptions}
+             </Select>
+
+
+             {/* Filter Icon with Popover */}
+             <Popover>
+               <PopoverTrigger>
+                 <IconButton
+                   aria-label="Filter Controls"
+                   icon={<FaFilter />}
+                   color="white" // Make the icon white
+                   bg="transparent"
+                   _hover={{ bg: "gray.700" }}
+                   size="sm" // Smaller size to reduce padding
+                 />
+               </PopoverTrigger>
+               <PopoverContent bg="gray.800" border="none" boxShadow="lg" borderRadius="md">
+                 <PopoverArrow bg="gray.800" />
+                 <PopoverCloseButton color="white" />
+                 <PopoverHeader color="white" fontWeight="bold">
+                   Controls
+                 </PopoverHeader>
+                 <PopoverBody>
+                   <VStack align="start" spacing={2}>
+                     {/* Category Selection */}
+                     <Box>
+                       <Text fontSize="sm" fontWeight="semibold" mb={1}>
+                         Category:
+                       </Text>
+                       <CheckboxGroup
+                         colorScheme="teal"
+                         value={selectedCategories}
+                         onChange={handleCategoryChange}
+                       >
+                         <HStack spacing={2}>
+                           <Checkbox
+                             value="nota"
+                             bg="transparent"
+                             _checked={{
+                               bg: "transparent",
+                               color: "teal.300",
+                               borderColor: "teal.300",
+                             }}
+                             size="sm" // Smaller size
+                           >
+                             Nota
+                           </Checkbox>
+                           <Checkbox
+                             value="video"
+                             bg="transparent"
+                             _checked={{
+                               bg: "transparent",
+                               color: "teal.300",
+                               borderColor: "teal.300",
+                             }}
+                             size="sm" // Smaller size
+                           >
+                             Video
+                           </Checkbox>
+                         </HStack>
+                       </CheckboxGroup>
+                     </Box>
+
+
+                     {/* Week Filter */}
+                     <Box>
+                       <Text fontSize="sm" fontWeight="semibold" mb={1}>
+                         Week:
+                       </Text>
+                       <Select
+                         value={selectedWeek}
+                         onChange={handleWeekChange}
+                         placeholder="Select Week"
+                         bg="transparent" // Changed from "white" to "transparent"
+                         color="white" // Changed text color to white
+                         borderRadius="md"
+                         size="sm" // Smaller size
+                         width="100%"
+                         border="1px solid rgba(255, 255, 255, 0.6)" // Added semi-transparent white border
+                         _placeholder={{ color: "gray.300" }} // Placeholder color
+                         _focus={{ borderColor: "teal.300", boxShadow: "none" }} // Focus state
+                         _hover={{ borderColor: "teal.200" }} // Hover state
+                       >
+                         {availableWeeks.map((week) => (
+                           <option key={week} value={week}>
+                             {week}
+                           </option>
+                         ))}
+                       </Select>
+                       {selectedWeek && (
+                         <Button
+                           colorScheme="red"
+                           variant="outline"
+                           size="xs" // Extra small size
+                           onClick={resetWeekSelection}
+                           mt={1} // Reduced top margin
+                         >
+                           Clear
+                         </Button>
+                       )}
+                     </Box>
+
+
+                     {/* Comparison Mode Selection */}
+                     <Box>
+                       <Text fontSize="sm" fontWeight="semibold" mb={1}>
+                         Comparison Mode:
+                       </Text>
+                       <HStack spacing={2}>
+                         <Button
+                           colorScheme={comparisonMode === "Weekly" ? "teal" : "gray"}
+                           onClick={() => handleComparisonModeChange("Weekly")}
+                           size="xs" // Extra small size
+                         >
+                           Weekly
+                         </Button>
+                         <Button
+                           colorScheme={comparisonMode === "Monthly" ? "teal" : "gray"}
+                           onClick={() => handleComparisonModeChange("Monthly")}
+                           size="xs" // Extra small size
+                         >
+                           Monthly
+                         </Button>
+                         <Button
+                           colorScheme={comparisonMode === "Yearly" ? "teal" : "gray"}
+                           onClick={() => handleComparisonModeChange("Yearly")}
+                           size="xs" // Extra small size
+                         >
+                           Yearly
+                         </Button>
+                       </HStack>
+                     </Box>
+                   </VStack>
+                 </PopoverBody>
+               </PopoverContent>
+             </Popover>
+           </Flex>
+         </Flex>
+
+
+         {/* Metrics Display */}
+         <Grid
+           templateColumns={{
+             base: "repeat(1, 1fr)", // 1 column on small screens
+             sm: "repeat(2, 1fr)", // 2 columns on small to medium screens
+             md: "repeat(3, 1fr)", // 3 columns on medium screens
+             lg: "repeat(4, 1fr)", // 4 columns on large screens
+             xl: "repeat(5, 1fr)", // 5 columns for 5 metrics
+           }}
+           gap={4} // Reduced gap for closer spacing
+           width="100%"
+           overflowX="auto" // Allow horizontal scrolling on smaller screens
+         >
+           {METRICS.map((metric) => {
+             // Prepare Plotly data for individual or averaged graph
+             const plotDataPoints = plotlyData.map((d) => d.date);
+             const plotMetricValues = plotlyData.map((d) => d[metric]);
+
+
+             // Calculate trendline slope
+             const xValues = plotlyData.map((d) => parseDate(d.date).getTime());
+             const yValues = plotMetricValues;
+             const slope = calculateSlope(xValues, yValues);
+             const lineColor = slope < 0 ? "green" : "red";
+
+
+             const individualPlotData = {
+               x: plotDataPoints,
+               y: plotMetricValues,
+               type: "scatter",
+               mode: "lines+markers", // Keeps markers for hover points
+               marker: {
+                 color: "#82ca9d",
+                 size: 6, // Adjust marker size as needed
+               },
+               line: {
+                 color: lineColor, // Dynamic color based on trend
+                 width: 2, // Reduced line width for less boldness
+               },
+               name: metric,
+               // **Updated hovertemplate to show only full date and value**
+               hovertemplate: "%{x|%B %d, %Y}<br>%{y}<extra></extra>",
+             };
+
+
+             return (
+               <Tooltip
+                 key={metric}
+                 label={RANGES_STRINGS[metric]}
+                 bg="gray.700"
+                 color="white"
+                 fontSize="sm"
+                 placement="top"
+                 hasArrow
+               >
+                 <Box
+                   bg="transparent"
+                   border="none"
+                   borderRadius="lg"
+                   p={4}
+                   transition="box-shadow 0.2s, transform 0.2s"
+                   _hover={{ boxShadow: "lg", transform: "translateY(-4px)" }}
+                   cursor="pointer"
+                   minW="140px"
+                   minH="250px" // Increased height to accommodate y-axis
+                   display="flex"
+                   flexDirection="column"
+                   justifyContent="space-between"
+                   position="relative" // To position the expand icon
+                 >
+                   <Flex direction="column" align="center">
+                     {/* Title and Expand Button Section */}
+                     <Flex width="100%" justifyContent="space-between" alignItems="center">
+                       <Box
+                         height="50px"
+                         display="flex"
+                         alignItems="center"
+                         justifyContent="center"
+                         textAlign="center"
+                         flex="1"
+                       >
+                         <Text color="white" fontSize="sm" fontWeight="bold" isTruncated>
+                           {metric}
+                         </Text>
+                       </Box>
+                       {/* Move Expand Button Here */}
+                       <IconButton
+                         aria-label="Expand Graph"
+                         icon={<FaExpand />}
+                         color="white"
+                         bg="transparent"
+                         _hover={{ bg: "transparent" }}
+                         size="sm"
+                         onClick={() => handleExpand(individualPlotData, metric)}
+                       />
+                     </Flex>
+
+
+                     {/* Number and Difference Section */}
+                     <Flex direction="column" justify="center" align="center" mt={2}>
+                       <Flex alignItems="center" justify="center">
+                         <Text color="white" fontSize="2xl" fontWeight="bold" textAlign="center">
+                           {formatNumber(averages[metric]) || "N/A"}{" "}
+                           {/* Removed unit labels */}
+                         </Text>
+                         {/* Add circle indicating performance */}
+                         <Box
+                           w={3}
+                           h={3}
+                           bg={getPerformanceColor(metric, parseFloat(averages[metric]))}
+                           borderRadius="50%"
+                           ml={2}
+                         />
+                       </Flex>
+                       {comparisonMode !== "Current" && (
+                         <>
+                           <Text
+                             color={getDifferenceColor(metric)}
+                             fontSize="sm"
+                             fontWeight="bold"
+                             mt={1}
+                           >
+                             {percentageDifferences[metric] !== "N/A"
+                               ? `${Math.abs(percentageDifferences[metric])}% ${
+                                   percentageDifferences[metric] < 0 ? "↑" : "↓"
+                                 }`
+                               : "N/A"}
+                           </Text>
+                           {percentageDifferences[metric] !== "N/A" && (
+                             <Text color="gray.300" fontSize="sm" mt={0.5}>
+                               {comparisonMode === "Weekly"
+                                 ? "vs Last Week"
+                                 : comparisonMode === "Monthly"
+                                 ? "vs Last Month"
+                                 : "vs Last Year"}
+                             </Text>
+                           )}
+                         </>
+                       )}
+                     </Flex>
+                   </Flex>
+
+
+                   {/* Graph Section */}
+                   <Box
+                     mt={4} // Increased margin-top for more space between labels and graph
+                     width="100%"
+                     height="150px" // Reduced height to allow more space below
+                     position="relative"
+                     className="plot-container"
+                   >
+                     <Box className="plot-container" position="relative" height="100%" width="100%">
+                       <Plot
+                         data={[individualPlotData]}
+                         layout={{
+                           autosize: true,
+                           margin: { l: 40, r: 10, t: 10, b: 30 }, // Adjusted margins
+                           xaxis: {
+                             tickfont: { size: 10, color: "white" }, // Set x-axis numbers to white
+                             type: "date",
+                             showgrid: false,
+                             zeroline: false,
+                             showline: false,
+                             ticks: "",
+                             tickformat: "%b", // Display abbreviated month names
+                             dtick: "M1", // Tick every month
+                             showticklabels: true,
+                           },
+                           yaxis: {
+                             tickfont: { size: 10, color: "white" }, // Set y-axis numbers to white
+                             showgrid: false,
+                             zeroline: false,
+                             showline: false,
+                             ticks: "",
+                             showticklabels: true,
+                             // Removed y-axis title
+                             title: {
+                               text: "", // No title
+                             },
+                           },
+                           showlegend: false,
+                           hovermode: "closest", // Ensures hover on closest point
+                           paper_bgcolor: "transparent",
+                           plot_bgcolor: "transparent",
+                         }}
+                         config={{
+                           displayModeBar: false,
+                           responsive: true,
+                           hovermode: "closest", // Ensures hover on closest point
+                         }}
+                         style={{ width: "100%", height: "100%" }}
+                       />
+                     </Box>
+                   </Box>
+                 </Box>
+               </Tooltip>
+             );
+           })}
+         </Grid>
+
+
+         {/* Modal for Expanded Graph */}
+         <Modal isOpen={isOpen} onClose={onClose} size="xl" isCentered>
+           <ModalOverlay />
+           <ModalContent bg="gray.800" color="white">
+             <ModalHeader>{modalPlotData ? modalPlotData.metric : "Expanded Graph"}</ModalHeader>
+             <ModalCloseButton />
+             <ModalBody>
+               {modalPlotData && (
+                 <Plot
+                   data={[modalPlotData]}
+                   layout={{
+                     autosize: true,
+                     margin: { l: 50, r: 50, t: 50, b: 50 },
+                     xaxis: {
+                       tickfont: { size: 12, color: "white" }, // Set x-axis numbers to white
+                       type: "date",
+                       title: "Date",
+                       titlefont: { size: 14, color: "white" },
+                       // **Updated tickformat to full date format**
+                       tickformat: "%B %d, %Y", // Displays as "October 5, 2024"
+                       dtick: "M1", // Tick every month
+                       showticklabels: true,
+                     },
+                     yaxis: {
+                       tickfont: { size: 12, color: "white" }, // Set y-axis numbers to white
+                       showgrid: true, // Optionally show grid in modal
+                       zeroline: false,
+                       showline: false,
+                       ticks: "",
+                       showticklabels: true,
+                       title: {
+                         text: "", // No title
+                       },
+                     },
+                     showlegend: false,
+                     hovermode: "closest", // Ensures hover on closest point
+                     paper_bgcolor: "transparent",
+                     plot_bgcolor: "transparent",
+                   }}
+                   config={{
+                     displayModeBar: true, // Enable mode bar in modal
+                     responsive: true,
+                     hovermode: "closest", // Ensures hover on closest point
+                   }}
+                   // **Updated hovertemplate to show only full date and value**
+                   data={[
+                     {
+                       ...modalPlotData,
+                       hovertemplate: "%{x|%B %d, %Y}<br>%{y}<extra></extra>",
+                     },
+                   ]}
+                   style={{ width: "100%", height: "100%" }}
+                 />
+               )}
+             </ModalBody>
+           </ModalContent>
+         </Modal>
+       </Flex>
+     )}
+   </>
+ );
 };
 
+
 export default General;
+
+
+
